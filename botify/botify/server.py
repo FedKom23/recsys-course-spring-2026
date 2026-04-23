@@ -33,6 +33,8 @@ recommendations_contextual_redis = Redis(app, config_prefix="REDIS_RECOMMENDATIO
 
 recommendations_hstu_redis = Redis(app, config_prefix="REDIS_RECOMMENDATIONS_HSTU")
 
+recommendations_lambda_redis = Redis(app, config_prefix="REDIS_RECOMMENDATIONS_LAMBDA")
+
 data_logger = DataLogger(app)
 atexit.register(data_logger.close)
 
@@ -68,11 +70,30 @@ catalog.upload_recommendations(
 )
 
 
+catalog.upload_recommendations(
+    recommendations_lambda_redis.connection,
+    "RECOMMENDATIONS_LAMBDA_FILE_PATH",
+    key_object="item_id",
+    key_recommendations="recommendations",
+)
+
+
+
 sasrec_i2i_recommender = I2IRecommender(
     listen_history_redis.connection,
     recommendations_contextual_redis.connection,
     random_recommender,
 )
+
+
+lambda_i2i_recommender = I2IRecommender(
+    listen_history_redis.connection,
+    recommendations_lambda_redis.connection,
+    random_recommender,
+)
+
+
+
 
 parser = reqparse.RequestParser()
 parser.add_argument("track", type=int, location="json", required=True)
@@ -112,14 +133,14 @@ class NextTrack(Resource):
         args = parser.parse_args()
         persist_user_listen_history(user, args.track, args.time)
 
-        treatment = Experiments.HSTU.assign(user)
+        treatment = Experiments.LAMBDA.assign(user)
 
         if treatment == Treatment.C:
             recommender = sasrec_i2i_recommender
         elif treatment == Treatment.T1:
-            recommender = Indexed(recommendations_hstu_redis.connection, catalog, random_recommender)
+            recommender = lambda_i2i_recommender
         else:
-            recommender = random_recommender
+            recommender = sasrec_i2i_recommender
 
         recommendation = recommender.recommend_next(user, args.track, args.time)
 
